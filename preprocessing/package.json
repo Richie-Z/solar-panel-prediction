@@ -1,0 +1,26 @@
+{
+  "name": "preprocessing",
+  "version": "1.0.0",
+  "main": "index.js",
+  "scripts": {
+    "build": "tsc",
+    "rename": "tsc && node dist/rename.js",
+    "csv": "tsc && node dist/csv.js",
+    "doi": "tsc && node dist/doi.js"
+  },
+  "author": "",
+  "license": "ISC",
+  "description": "",
+  "devDependencies": {
+    "@types/json2csv": "^5.0.7",
+    "@types/node": "^22.7.5",
+    "typescript": "^5.6.2"
+  },
+  "dependencies": {
+    "dayjs": "^1.11.13",
+    "json2csv": "^6.0.0-alpha.2",
+    "node-xlsx": "^0.24.0",
+    "pdf2doi": "^1.0.4",
+    "xlsx": "^0.20.2"
+  }
+}
