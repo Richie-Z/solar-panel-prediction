@@ -1,0 +1,156 @@
+%% Metodologi
+flowchart TD
+    A1[Identifikasi Masalah] --> A2[Kajian Literatur]
+    A2 --> A3[Pengumpulan Data Energi]
+    A3 --> A4[Preprocessing Data]
+    A4 --> A5[Perancangan Model Prediktif]
+    A5 --> A6{Pengujian Model}
+    A6 --> |Hasil Akurasi Rendah| A4
+    A6 --> |Hasil Akurasi Tinggi| A10[Penarikan Kesimpulan]
+    A10 --> A11[Penyusunan Laporan dan Publikasi]
+
+    subgraph Metodologi
+        A1
+        A2
+        A3
+        A4
+        A5
+        A6
+        A10
+        A11
+    end
+
+    style A1 fill:#f9f,stroke:#333,stroke-width:2px
+    style A2 fill:#bbf,stroke:#333,stroke-width:2px
+    style A3 fill:#bbf,stroke:#333,stroke-width:2px
+    style A4 fill:#bbf,stroke:#333,stroke-width:2px
+    style A5 fill:#bbf,stroke:#333,stroke-width:2px
+    style A6 fill:#bbf,stroke:#333,stroke-width:2px
+    style A10 fill:#bbf,stroke:#333,stroke-width:2px
+    style A11 fill:#bbf,stroke:#333,stroke-width:2px
+
+
+%% Automated
+ flowchart TD
+    A[Start] --> B[ARIMA + Random Forest Model]
+    B --> D[Predict Energy Consumption]
+    D --> F[Fuzzy Logic Controller]
+    F --> B1{Solar Production?}
+    H --> M[Monitor and Refine Fuzzy Rules]
+    M --> N[Enhance System Efficiency]
+    N --> O[Real-time Data Analysis]
+    O --> |Continue Predict Again| B
+   
+    B1 -->|High| C1{Battery Level?}
+    B1 -->|Medium| D1{Battery Level?}
+    B1 -->|Low| E1{Energy Consumption?}
+    
+    C1 -->|Low| F1[Increase Battery Charging]
+    C1 -->|Medium| G1[Maintain Current Energy Distribution]
+    C1 -->|High| H1[Maintain Current Energy Distribution]
+    
+    D1 -->|Low| I1[Increase Battery Charging]
+    D1 -->|Medium| J1[Maintain Current Energy Distribution]
+    D1 -->|High| K1[Maintain Current Energy Distribution]
+    
+    E1 -->|High| L1[Reduce Energy Load]
+    E1 -->|Medium| M1[Maintain Current Energy Distribution]
+    E1 -->|Low| N1[Maintain Current Energy Distribution]
+    
+    F1 --> H[Feedback Loop]
+    G1 --> H
+    H1 --> H
+    I1 --> H
+    J1 --> H
+    K1 --> H
+    L1 --> H
+    M1 --> H
+    N1 --> H 
+
+
+%% Model
+flowchart TD
+    A[Start] --> C[Export daily solar panel data]
+    C --> D[Standardize data into one CSV]
+    D --> F[Clean data: Handle missing values using ffill method]
+    F --> H[Data Splitting]
+    H --> I[80% Training Set]
+    H --> J[20% Testing Set]
+    I --> IK[Hyperparameter Tuning in ARIMA]
+    IK --> K[ARIMA Model]
+    M --> RF[Random Forest Model]
+    I --> RF
+    K --> M[ARIMA Model Training]
+    RF --> RFA[Random Forest Model Training]
+    RFA --> N[Model Testing]
+    J --> N
+    N --> O{Calculate Metrics: MAE, RMSE, MSE}
+    O --> |Good| P[End]
+    O --> |Bad| I
+
+    subgraph Data Collection
+    C
+    D
+    end
+
+    subgraph Data Preprocessing
+    F
+    end
+
+    subgraph Sequential Model Development
+    H
+    I
+    IK
+    J
+    K
+    RF
+    RFA
+    M
+    end
+
+    subgraph Model Evaluation
+    N
+    O
+
+    end
+
+%% First Metodologi
+flowchart TD
+    A1[Identifikasi Masalah] --> A2[Kajian Literatur]
+    A2 --> A3[Pengumpulan Data Energi]
+    A3 --> A4[Preprocessing Data]
+    A4 --> A5[Perancangan Model Prediktif]
+    A5 --> A6{Pengujian Model}
+    A6 --> |Hasil Akurasi Rendah| A4
+    A6 --> |Hasil Akurasi Tinggi| A7[Pengembangan Mekanisme Otomatisasi]
+    A7 --> A8[Implementasi Model dan Otomatisasi]
+    A8 --> A9{Pengujian Sistem}
+    A9 --> |Sistem tidak dapat merespon dengan baik| A7
+    A9 --> |Sistem dapat erespon dengan baik| A10[Penarikan Kesimpulan]
+    A10 --> A11[Penyusunan Laporan dan Publikasi]
+
+    subgraph Metodologi
+        A1
+        A2
+        A3
+        A4
+        A5
+        A6
+        A7
+        A8
+        A9
+        A10
+        A11
+    end
+
+    style A1 fill:#f9f,stroke:#333,stroke-width:2px
+    style A2 fill:#bbf,stroke:#333,stroke-width:2px
+    style A3 fill:#bbf,stroke:#333,stroke-width:2px
+    style A4 fill:#bbf,stroke:#333,stroke-width:2px
+    style A5 fill:#bbf,stroke:#333,stroke-width:2px
+    style A6 fill:#bbf,stroke:#333,stroke-width:2px
+    style A7 fill:#bbf,stroke:#333,stroke-width:2px
+    style A8 fill:#bbf,stroke:#333,stroke-width:2px
+    style A9 fill:#bbf,stroke:#333,stroke-width:2px
+    style A10 fill:#bbf,stroke:#333,stroke-width:2px
+    style A11 fill:#bbf,stroke:#333,stroke-width:2px
