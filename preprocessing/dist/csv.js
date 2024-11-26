@@ -7,8 +7,8 @@ const node_xlsx_1 = __importDefault(require("node-xlsx"));
 const os_1 = require("os");
 const path_1 = require("path");
 const fs_1 = __importDefault(require("fs"));
-const json2csv_1 = require("json2csv"); // To convert JSON to CSV
-const folderDir = (0, path_1.join)((0, os_1.homedir)(), '/Downloads/Data/months_processed/');
+const json2csv_1 = require("json2csv");
+const folderDir = (0, path_1.join)((0, os_1.homedir)(), '/Documents/Programming/Projects/on-going/solar-panel-prediction/raw-data/months_processed/');
 const outputCsvFile = (0, path_1.join)(folderDir, 'combined_output.csv');
 const combinedData = [];
 fs_1.default.readdir(folderDir, (err, files) => {
@@ -21,11 +21,9 @@ fs_1.default.readdir(folderDir, (err, files) => {
         const filePath = (0, path_1.join)(folderDir, file);
         const workSheetsFromBuffer = node_xlsx_1.default.parse(filePath);
         const sheetData = workSheetsFromBuffer[0].data;
-        // Skip the header row in all but the first file
         if (combinedData.length === 0) {
-            combinedData.push(sheetData[1]); // Add headers
+            combinedData.push(sheetData[1]);
         }
-        // Add the data from the current file (excluding the header)
         for (let i = 2; i < sheetData.length; i++) {
             combinedData.push(sheetData[i]);
         }

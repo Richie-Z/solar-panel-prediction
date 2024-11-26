@@ -1,7 +1,7 @@
 import os
 from openpyxl import load_workbook
 
-data_folder = '/Users/richie/Downloads/Data/months_processed'
+data_folder = '/Users/richie/Documents/Programming/Projects/on-going/solar-panel-prediction/raw-data/months_processed'
 
 for filename in os.listdir(data_folder):
     if filename.endswith('.xlsx'):

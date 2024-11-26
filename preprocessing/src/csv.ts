@@ -2,9 +2,9 @@ import xlsx from 'node-xlsx';
 import { homedir } from 'os';
 import { join } from 'path';
 import fs from 'fs';
-import { parse } from 'json2csv'; // To convert JSON to CSV
+import { parse } from 'json2csv';
 
-const folderDir = join(homedir(), '/Downloads/Data/months_processed/');
+const folderDir = join(homedir(), '/Documents/Programming/Projects/on-going/solar-panel-prediction/raw-data/months_processed/');
 const outputCsvFile = join(folderDir, 'combined_output.csv');
 
 const combinedData: any[] = [];
@@ -23,12 +23,10 @@ fs.readdir(folderDir, (err, files) => {
 
     const sheetData = workSheetsFromBuffer[0].data;
 
-    // Skip the header row in all but the first file
     if (combinedData.length === 0) {
-      combinedData.push(sheetData[1]); // Add headers
+      combinedData.push(sheetData[1]);
     }
 
-    // Add the data from the current file (excluding the header)
     for (let i = 2; i < sheetData.length; i++) {
       combinedData.push(sheetData[i]);
     }
