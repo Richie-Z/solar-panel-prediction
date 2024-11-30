@@ -1,0 +1,3 @@
+[submodule "data-preparation/weather-scraper"]
+	path = data-preparation/weather-scraper
+	url = https://github.com/nihalrai/Weather-Scraper
