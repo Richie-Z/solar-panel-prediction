@@ -327,4 +327,40 @@ def evaluate_predictions(actual, predicted, fill_value=0):
     mse = mean_squared_error(actual, predicted)
     rmse = np.sqrt(mse)
 
-    return {"MAE": mae, "MSE": mse, "RMSE": rmse}
+    mean_value = actual.mean()
+    print(f"10% of Mean Value (Target MAE/RMSE): {0.1 * mean_value}")
+    print(f"Mean Absolute Error (MAE): {mae}")
+    if mae > 0.1 * mean_value:
+        print("Warning: MAE is greater than 10% of the mean value.")
+    print(f"Mean Squared Error (MSE): {mse}")
+    if mse > 0.1 * mean_value:
+        print("Warning: MSE is greater than 10% of the mean value.")
+    print(f"Root Mean Squared Error (RMSE): {rmse}")
+    if rmse > 0.1 * mean_value:
+        print("Warning: RMSE is greater than 10% of the mean value.")
+
+    return {"MAE": mae, "MSE": mse, "RMSE": rmse, "treshold": mean_value}
+
+
+def compare_prediction(
+    title: str, train_data: pd.Series, test_data: pd.Series, predicted
+) -> None:
+    """
+    Plot and compare train, test, and predicted data.
+
+    Parameters:
+    - title: str. The title of the plot.
+    - train_data: pd.Series. The training data series.
+    - test_data: pd.Series. The test data series.
+    - predicted: pd.Series. The predicted data series.
+
+    Returns:
+    - None
+    """
+    plt.figure(figsize=(12, 6))
+    plt.plot(train_data, label="Train")
+    plt.plot(test_data, label="Test", color="orange")
+    plt.plot(predicted, label="Predicted", color="green")
+    plt.legend()
+    plt.title(title)
+    plt.show()
