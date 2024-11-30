@@ -1,4 +1,3 @@
-import itertools
 import matplotlib.pyplot as plt
 import pandas as pd
 import seaborn as sns
@@ -10,6 +9,7 @@ from enums import (
 
 from typing import List
 from diskcache import Cache
+from itertools import product
 from statsmodels.tsa.stattools import adfuller
 from statsmodels.tsa.statespace.sarimax import SARIMAX
 
