@@ -1,4 +1,4 @@
 .DS_Store
 /raw-data/
-/preprocessing/node_modules/
+node_modules/
 __pycache__/
