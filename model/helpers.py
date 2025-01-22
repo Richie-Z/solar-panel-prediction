@@ -1,6 +1,9 @@
 import matplotlib.pyplot as plt
 import pandas as pd
 import seaborn as sns
+import numpy as np
+from itertools import product
+from sklearn.model_selection import TimeSeriesSplit
 
 from enums import (
     DatasetColumns,
@@ -12,6 +15,11 @@ from diskcache import Cache
 from itertools import product
 from statsmodels.tsa.stattools import adfuller
 from statsmodels.tsa.statespace.sarimax import SARIMAX
+from sklearn.metrics import (
+    mean_absolute_error,
+    mean_squared_error,
+    mean_absolute_percentage_error,
+)
 
 
 def check_stationarity(series: pd.Series, significance_level: float = 0.05):
@@ -75,87 +83,6 @@ def find_missing_date_ranges(data: pd.Series, date_column: str):
         missing_ranges.append((current_start, prev_date))
 
     return missing_ranges[0]
-
-
-def find_best_sarima_params(
-    data: pd.Series,
-    seasonal_period: int,
-    p_values,
-    d_values,
-    q_values,
-    P_values,
-    D_values,
-    Q_values,
-) -> tuple:
-    """
-    Tunes the SARIMA model parameters to find the best combination based on AIC score.
-
-    Parameters:
-    - data: pd.Series. The time series data to model.
-    - seasonal_period: int. The number of observations in one season.
-    - p_values: list of int. The possible values for the non-seasonal autoregressive order.
-    - d_values: list of int. The possible values for the non-seasonal differencing order.
-    - q_values: list of int. The possible values for the non-seasonal moving average order.
-    - P_values: list of int. The possible values for the seasonal autoregressive order.
-    - D_values: list of int. The possible values for the seasonal differencing order.
-    - Q_values: list of int. The possible values for the seasonal moving average order.
-
-    Returns:
-    - best_params: tuple. The best combination of parameters (p, d, q, P, D, Q) based on AIC score.
-    - best_score: float. The best AIC score obtained.
-    """
-    best_score = float("inf")
-    best_params = None
-
-    for params in product(p_values, d_values, q_values):
-        for seasonal_params in product(P_values, D_values, Q_values):
-            try:
-                model = SARIMAX(
-                    data,
-                    order=params,
-                    seasonal_order=seasonal_params + (seasonal_period,),
-                    enforce_stationarity=False,
-                    enforce_invertibility=False,
-                )
-                result = model.fit(disp=False)
-                # Calculate AIC (Akaike Information Criterion)
-                aic = result.aic
-                if aic < best_score:
-                    best_score = aic
-                    best_params = (params, seasonal_params)
-            except Exception:
-                continue
-
-    return best_params, best_score
-
-
-def find_best_sarima_cached(data, seasonal_period, p, d, q, P, D, Q):
-    """
-    Finds the best SARIMA parameters for the given data by searching over all combinations of p, d, q, P, D, and Q, and returns the best parameters and the associated AIC score. The search is done with a cache: if the same parameters have been searched before, the cache is used instead of recomputing the best parameters.
-
-    Parameters:
-    - data: pd.Series. The time series data to model.
-    - seasonal_period: int. The number of observations in one season.
-    - p_values: list of int. The possible values for the non-seasonal autoregressive order.
-    - d_values: list of int. The possible values for the non-seasonal differencing order.
-    - q_values: list of int. The possible values for the non-seasonal moving average order.
-    - P_values: list of int. The possible values for the seasonal autoregressive order.
-    - D_values: list of int. The possible values for the seasonal differencing order.
-    - Q_values: list of int. The possible values for the seasonal moving average order.
-
-    Returns:
-    - best_params: tuple. The best combination of parameters (p, d, q, P, D, Q) based on AIC score.
-    - best_score: float. The best AIC score obtained.
-    """
-    cache = Cache("sarima_cache")
-    cache_key = f"sarima_params_{hash((seasonal_period, tuple(p), tuple(d), tuple(q), tuple(P), tuple(D), tuple(Q)))}"
-    if cache_key in cache:
-        return cache[cache_key]
-    best_params, best_aic = find_best_sarima_params(
-        data, seasonal_period, p, d, q, P, D, Q
-    )
-    cache[cache_key] = (best_params, best_aic)
-    return best_params, best_aic
 
 
 def present_base_dataset(
@@ -294,10 +221,6 @@ def present_base_dataset(
     plt.show()
 
 
-from sklearn.metrics import mean_absolute_error, mean_squared_error
-import numpy as np
-
-
 def evaluate_predictions(actual, predicted, fill_value=0):
     """
     Evaluate predictions using MAE, MSE, and RMSE.
@@ -325,6 +248,7 @@ def evaluate_predictions(actual, predicted, fill_value=0):
     # Calculate metrics
     mae = mean_absolute_error(actual, predicted)
     mse = mean_squared_error(actual, predicted)
+    mape = mean_absolute_percentage_error(actual, predicted)
     rmse = np.sqrt(mse)
 
     mean_value = actual.mean()
@@ -338,8 +262,11 @@ def evaluate_predictions(actual, predicted, fill_value=0):
     print(f"Root Mean Squared Error (RMSE): {rmse}")
     if rmse > 0.1 * mean_value:
         print("Warning: RMSE is greater than 10% of the mean value.")
+    print(f"Mean Absolute Percentage Error (MAPE): {mape}")
+    if mape > 0.1 * mean_value:
+        print("Warning: MAPE is greater than 10% of the mean value.")
 
-    return {"MAE": mae, "MSE": mse, "RMSE": rmse, "treshold": mean_value}
+    return {"MAE": mae, "MSE": mse, "RMSE": rmse, "MAPE": mape, "treshold": mean_value}
 
 
 def compare_prediction(
@@ -364,3 +291,224 @@ def compare_prediction(
     plt.legend()
     plt.title(title)
     plt.show()
+
+
+def find_best_sarima_params(
+    data: pd.Series,
+    seasonal_period: int,
+    p_values,
+    d_values,
+    q_values,
+    P_values,
+    D_values,
+    Q_values,
+) -> tuple:
+    """
+    Tunes the SARIMA model parameters to find the best combination based on AIC score.
+
+    Parameters:
+    - data: pd.Series. The time series data to model.
+    - seasonal_period: int. The number of observations in one season.
+    - p_values: list of int. The possible values for the non-seasonal autoregressive order.
+    - d_values: list of int. The possible values for the non-seasonal differencing order.
+    - q_values: list of int. The possible values for the non-seasonal moving average order.
+    - P_values: list of int. The possible values for the seasonal autoregressive order.
+    - D_values: list of int. The possible values for the seasonal differencing order.
+    - Q_values: list of int. The possible values for the seasonal moving average order.
+
+    Returns:
+    - best_params: tuple. The best combination of parameters (p, d, q, P, D, Q) based on AIC score.
+    - best_score: float. The best AIC score obtained.
+    """
+    best_score = float("inf")
+    best_params = None
+
+    for params in product(p_values, d_values, q_values):
+        for seasonal_params in product(P_values, D_values, Q_values):
+            try:
+                model = SARIMAX(
+                    data,
+                    order=params,
+                    seasonal_order=seasonal_params + (seasonal_period,),
+                    enforce_stationarity=False,
+                    enforce_invertibility=False,
+                )
+                result = model.fit(disp=False)
+                # Calculate AIC (Akaike Information Criterion)
+                aic = result.aic
+                if aic < best_score:
+                    best_score = aic
+                    best_params = (params, seasonal_params)
+            except Exception:
+                continue
+
+    return best_params, best_score
+
+
+def find_best_sarima_cached(
+    data, seasonal_period, p, d, q, P, D, Q, cache_name="sarima_cache"
+):
+    """
+    Finds the best SARIMA parameters for the given data by searching over all combinations of p, d, q, P, D, and Q, and returns the best parameters and the associated AIC score. The search is done with a cache: if the same parameters have been searched before, the cache is used instead of recomputing the best parameters.
+
+    Parameters:
+    - data: pd.Series. The time series data to model.
+    - seasonal_period: int. The number of observations in one season.
+    - p_values: list of int. The possible values for the non-seasonal autoregressive order.
+    - d_values: list of int. The possible values for the non-seasonal differencing order.
+    - q_values: list of int. The possible values for the non-seasonal moving average order.
+    - P_values: list of int. The possible values for the seasonal autoregressive order.
+    - D_values: list of int. The possible values for the seasonal differencing order.
+    - Q_values: list of int. The possible values for the seasonal moving average order.
+
+    Returns:
+    - best_params: tuple. The best combination of parameters (p, d, q, P, D, Q) based on AIC score.
+    - best_score: float. The best AIC score obtained.
+    """
+    cache = Cache(cache_name)
+    cache_key = f"sarima_params_{hash((seasonal_period, tuple(p), tuple(d), tuple(q), tuple(P), tuple(D), tuple(Q)))}"
+    if cache_key in cache:
+        return cache[cache_key]
+    best_params, best_aic = find_best_sarima_params(
+        data, seasonal_period, p, d, q, P, D, Q
+    )
+    cache[cache_key] = (best_params, best_aic)
+    return best_params, best_aic
+
+
+def find_best_sarima_params_tscv(
+    data: pd.Series,
+    exog_data: pd.DataFrame,
+    seasonal_period: int,
+    p_values,
+    d_values,
+    q_values,
+    P_values,
+    D_values,
+    Q_values,
+    n_splits=5,
+    metric="aic",  # Could be "aic", "mae", "mse", etc.
+) -> tuple:
+    """
+    Tunes the SARIMA model parameters using Time-Series Cross-Validation (TSCV) to find the best combination
+    based on the specified metric (e.g., AIC, MAE, MSE).
+
+    Parameters:
+    - data: pd.Series. The time series data to model.
+    - seasonal_period: int. The number of observations in one season.
+    - p_values, d_values, q_values: List[int]. Non-seasonal orders.
+    - P_values, D_values, Q_values: List[int]. Seasonal orders.
+    - n_splits: int. Number of splits for Time-Series Cross-Validation.
+    - metric: str. Metric to optimize ("aic", "mae", "mse", etc.).
+
+    Returns:
+    - best_params: tuple. The best combination of parameters (p, d, q, P, D, Q) based on the chosen metric.
+    - best_score: float. The best score achieved.
+    """
+    ts_cv = TimeSeriesSplit(n_splits=n_splits)
+    best_score = float("inf")
+    best_params = None
+
+    for params in product(p_values, d_values, q_values):
+        for seasonal_params in product(P_values, D_values, Q_values):
+            fold_scores = []
+
+            for train_idx, test_idx in ts_cv.split(data):
+                train_data, test_data = data.iloc[train_idx], data.iloc[test_idx]
+                train_exog, test_exog = (
+                    exog_data.iloc[train_idx],
+                    exog_data.iloc[test_idx],
+                )
+
+                try:
+                    model = SARIMAX(
+                        train_data,
+                        exog=train_exog,
+                        order=params,
+                        seasonal_order=seasonal_params + (seasonal_period,),
+                        enforce_stationarity=False,
+                        enforce_invertibility=False,
+                    )
+                    result = model.fit(disp=False)
+
+                    # Predict
+                    preds = result.predict(
+                        start=test_data.index[0],
+                        end=test_data.index[-1],
+                        exog=test_exog,
+                    )
+
+                    # Calculate the chosen metric
+                    if metric == "aic":
+                        score = result.aic
+                    elif metric == "mae":
+                        score = np.mean(np.abs(preds - test_data))
+                    elif metric == "mse":
+                        score = np.mean((preds - test_data) ** 2)
+                    else:
+                        raise ValueError(f"Invalid metric: {metric}")
+
+                    fold_scores.append(score)
+                except Exception as e:
+                    print(e)
+                    fold_scores.append(np.inf)
+
+            # Calculate average score across all folds
+            avg_score = np.mean(fold_scores)
+            if avg_score < best_score:
+                best_score = avg_score
+                best_params = (params, seasonal_params)
+
+    return best_params, best_score
+
+
+def find_best_sarima_cached_tscv(
+    data: pd.Series,
+    exog_data: pd.DataFrame,
+    seasonal_period: int,
+    p_values,
+    d_values,
+    q_values,
+    P_values,
+    D_values,
+    Q_values,
+    n_splits=5,
+    metric="aic",
+) -> tuple:
+    """
+    Finds the best SARIMA parameters for the given data using Time-Series Cross-Validation with caching.
+
+    Parameters:
+    - data: pd.Series. The time series data to model.
+    - seasonal_period: int. The number of observations in one season.
+    - p_values, d_values, q_values: List[int]. Non-seasonal orders.
+    - P_values, D_values, Q_values: List[int]. Seasonal orders.
+    - n_splits: int. Number of splits for Time-Series Cross-Validation.
+    - metric: str. Metric to optimize ("aic", "mae", "mse", etc.).
+
+    Returns:
+    - best_params: tuple. The best combination of parameters (p, d, q, P, D, Q) based on the chosen metric.
+    - best_score: float. The best score achieved.
+    """
+    cache = Cache("sarima_cache_tscv")
+    cache_key = f"sarima_params_tscv_{hash((seasonal_period, tuple(p_values), tuple(d_values), tuple(q_values), tuple(P_values), tuple(D_values), tuple(Q_values), n_splits, metric))}"
+
+    if cache_key in cache:
+        return cache[cache_key]
+
+    best_params, best_score = find_best_sarima_params_tscv(
+        data,
+        exog_data,
+        seasonal_period,
+        p_values,
+        d_values,
+        q_values,
+        P_values,
+        D_values,
+        Q_values,
+        n_splits,
+        metric,
+    )
+    cache[cache_key] = (best_params, best_score)
+
+    return best_params, best_score
