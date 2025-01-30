@@ -2,89 +2,89 @@ import tensorflow as tf
 from tensorflow.keras import layers, models
 
 
-def build_generator(input_dim, output_dim):
-    model = models.Sequential(name="Generator")
+def build_generator(latent_dim, num_features):
+    noise_input = tf.keras.Input(shape=(latent_dim,))
+    weather_input = tf.keras.Input(shape=(num_features,))
 
-    # Initial dense layer
-    model.add(layers.Dense(512, input_dim=input_dim))
-    model.add(layers.LeakyReLU(alpha=0.2))
-    model.add(layers.BatchNormalization())
-    model.add(layers.Dropout(0.3))
+    # Concatenate noise and weather features
+    x = tf.keras.layers.Concatenate()([noise_input, weather_input])
 
-    # Add residual blocks
+    # Initial dense layer with larger size
+    x = tf.keras.layers.Dense(1024)(x)
+    x = tf.keras.layers.LeakyReLU(alpha=0.2)(x)
+    x = tf.keras.layers.BatchNormalization()(x)
+
+    # Intermediate layers with skip connections
     def residual_block(x, units):
         skip = x
-        x = layers.Dense(units)(x)
-        x = layers.LeakyReLU(alpha=0.2)(x)
-        x = layers.BatchNormalization()(x)
-        x = layers.Dense(units)(x)
-        x = layers.LeakyReLU(alpha=0.2)(x)
-        x = layers.BatchNormalization()(x)
-        x = layers.Add()([x, skip])
+        x = tf.keras.layers.Dense(units)(x)
+        x = tf.keras.layers.LeakyReLU(alpha=0.2)(x)
+        x = tf.keras.layers.BatchNormalization()(x)
+        x = tf.keras.layers.Dense(units)(x)
+        x = tf.keras.layers.LeakyReLU(alpha=0.2)(x)
+        x = tf.keras.layers.BatchNormalization()(x)
+        # Add skip connection if dimensions match
+        if skip.shape[-1] == units:
+            x = tf.keras.layers.Add()([x, skip])
         return x
 
-    # Middle layers with residual connections
-    x = model.layers[-1].output
     x = residual_block(x, 512)
-    x = residual_block(x, 512)
+    x = residual_block(x, 256)
 
-    # Output layer
-    x = layers.Dense(output_dim, activation="linear")(x)
+    # Pre-output layer
+    x = tf.keras.layers.Dense(128)(x)
+    x = tf.keras.layers.LeakyReLU(alpha=0.2)(x)
+    x = tf.keras.layers.BatchNormalization()(x)
 
-    return models.Model(model.input, x)
+    # Output layer with softplus activation (smoother than ReLU)
+    output = tf.keras.layers.Dense(1, activation="softplus")(x)
 
-
-def build_discriminator(input_dim):
-    model = models.Sequential(name="Discriminator")
-
-    # Feature extraction layers
-    model.add(layers.Dense(512, input_dim=input_dim))
-    model.add(layers.LeakyReLU(alpha=0.2))
-    model.add(layers.LayerNormalization())  # Layer normalization instead of batch norm
-    model.add(layers.Dropout(0.3))
-
-    model.add(layers.Dense(256))
-    model.add(layers.LeakyReLU(alpha=0.2))
-    model.add(layers.LayerNormalization())
-    model.add(layers.Dropout(0.3))
-
-    # Additional layer for better feature extraction
-    model.add(layers.Dense(128))
-    model.add(layers.LeakyReLU(alpha=0.2))
-    model.add(layers.LayerNormalization())
-    model.add(layers.Dropout(0.3))
-
-    # Output layer with gradient penalty
-    model.add(layers.Dense(1, activation="linear"))  # Linear activation for WGAN
-
-    return model
+    return tf.keras.Model(
+        inputs=[noise_input, weather_input], outputs=output, name="Generator"
+    )
 
 
-class SolarGAN(models.Model):
-    def __init__(self, latent_dim, feature_dim, generator, discriminator):
+def build_discriminator(num_features):
+    pv_input = tf.keras.Input(shape=(1,))
+    weather_input = tf.keras.Input(shape=(num_features,))
+
+    # Concatenate PV yield and weather features
+    x = tf.keras.layers.Concatenate()([pv_input, weather_input])
+
+    # Dense layers with LeakyReLU
+    x = tf.keras.layers.Dense(256)(x)
+    x = tf.keras.layers.LeakyReLU(alpha=0.2)(x)
+    x = tf.keras.layers.LayerNormalization()(x)
+
+    x = tf.keras.layers.Dense(128)(x)
+    x = tf.keras.layers.LeakyReLU(alpha=0.2)(x)
+    x = tf.keras.layers.LayerNormalization()(x)
+
+    x = tf.keras.layers.Dense(64)(x)
+    x = tf.keras.layers.LeakyReLU(alpha=0.2)(x)
+    x = tf.keras.layers.LayerNormalization()(x)
+
+    # Output without activation for WGAN
+    output = tf.keras.layers.Dense(1)(x)
+
+    return tf.keras.Model(
+        inputs=[pv_input, weather_input], outputs=output, name="Discriminator"
+    )
+
+
+class SolarGAN(tf.keras.Model):
+    def __init__(self, latent_dim, num_features):
         super(SolarGAN, self).__init__()
         self.latent_dim = latent_dim
-        self.feature_dim = feature_dim
-        self.generator = generator
-        self.discriminator = discriminator
-        self.gp_weight = 10.0  # Gradient penalty weight
+        self.num_features = num_features
+        self.generator = build_generator(latent_dim, num_features)
+        self.discriminator = build_discriminator(num_features)
+        self.gp_weight = 10.0
 
-    def gradient_penalty(self, real_samples, fake_samples, weather_features):
-        batch_size = tf.shape(real_samples)[0]
-        alpha = tf.random.uniform([batch_size, 1], 0.0, 1.0)
-        diff = fake_samples - real_samples
-        interpolated = real_samples + alpha * diff
-
-        with tf.GradientTape() as gp_tape:
-            gp_tape.watch(interpolated)
-            pred = self.discriminator(
-                tf.concat([interpolated, weather_features], axis=1)
-            )
-
-        grads = gp_tape.gradient(pred, interpolated)[0]
-        norm = tf.sqrt(tf.reduce_sum(tf.square(grads), axis=[1]))
-        gp = tf.reduce_mean((norm - 1.0) ** 2)
-        return gp
+    def compile(self, g_optimizer, d_optimizer):
+        super(SolarGAN, self).compile()
+        self.g_optimizer = g_optimizer
+        self.d_optimizer = d_optimizer
 
     @tf.function
     def train_step(self, data):
@@ -92,48 +92,63 @@ class SolarGAN(models.Model):
         batch_size = tf.shape(real_pv)[0]
 
         # Train discriminator
-        for _ in range(5):  # Multiple discriminator updates per generator update
+        for _ in range(3):  # Reduced number of D updates
             noise = tf.random.normal([batch_size, self.latent_dim])
-            generator_inputs = tf.concat([noise, weather_features], axis=1)
 
-            with tf.GradientTape() as disc_tape:
-                fake_pv = self.generator(generator_inputs, training=True)
+            with tf.GradientTape() as tape:
+                fake_pv = self.generator([noise, weather_features], training=True)
 
-                real_output = self.discriminator(
-                    tf.concat([real_pv, weather_features], axis=1), training=True
+                real_pred = self.discriminator(
+                    [real_pv, weather_features], training=True
                 )
-                fake_output = self.discriminator(
-                    tf.concat([fake_pv, weather_features], axis=1), training=True
-                )
-
-                gp = self.gradient_penalty(real_pv, fake_pv, weather_features)
-                disc_loss = (
-                    tf.reduce_mean(fake_output)
-                    - tf.reduce_mean(real_output)
-                    + self.gp_weight * gp
+                fake_pred = self.discriminator(
+                    [fake_pv, weather_features], training=True
                 )
 
-            disc_grads = disc_tape.gradient(
-                disc_loss, self.discriminator.trainable_variables
+                # Gradient penalty
+                alpha = tf.random.uniform([batch_size, 1], 0.0, 1.0)
+                interpolated = alpha * real_pv + (1 - alpha) * fake_pv
+
+                with tf.GradientTape() as gp_tape:
+                    gp_tape.watch(interpolated)
+                    interp_pred = self.discriminator(
+                        [interpolated, weather_features], training=True
+                    )
+
+                grads = gp_tape.gradient(interp_pred, interpolated)
+                grad_norm = tf.sqrt(tf.reduce_sum(tf.square(grads), axis=1))
+                gradient_penalty = tf.reduce_mean((grad_norm - 1.0) ** 2)
+
+                # Discriminator loss with reduced weight on gradient penalty
+                d_loss = (
+                    tf.reduce_mean(fake_pred)
+                    - tf.reduce_mean(real_pred)
+                    + self.gp_weight * gradient_penalty
+                )
+
+            d_gradients = tape.gradient(d_loss, self.discriminator.trainable_variables)
+            self.d_optimizer.apply_gradients(
+                zip(d_gradients, self.discriminator.trainable_variables)
             )
-            self.optimizer.apply_gradients(
-                zip(disc_grads, self.discriminator.trainable_variables)
+
+        # Train generator twice
+        for _ in range(2):
+            noise = tf.random.normal([batch_size, self.latent_dim])
+
+            with tf.GradientTape() as tape:
+                fake_pv = self.generator([noise, weather_features], training=True)
+                fake_pred = self.discriminator(
+                    [fake_pv, weather_features], training=True
+                )
+
+                # Generator loss with added L1 loss for stability
+                g_loss = -tf.reduce_mean(fake_pred) + 0.1 * tf.reduce_mean(
+                    tf.abs(fake_pv - real_pv)
+                )
+
+            g_gradients = tape.gradient(g_loss, self.generator.trainable_variables)
+            self.g_optimizer.apply_gradients(
+                zip(g_gradients, self.generator.trainable_variables)
             )
 
-        # Train generator
-        noise = tf.random.normal([batch_size, self.latent_dim])
-        generator_inputs = tf.concat([noise, weather_features], axis=1)
-
-        with tf.GradientTape() as gen_tape:
-            fake_pv = self.generator(generator_inputs, training=True)
-            fake_output = self.discriminator(
-                tf.concat([fake_pv, weather_features], axis=1), training=True
-            )
-            gen_loss = -tf.reduce_mean(fake_output)
-
-        gen_grads = gen_tape.gradient(gen_loss, self.generator.trainable_variables)
-        self.optimizer.apply_gradients(
-            zip(gen_grads, self.generator.trainable_variables)
-        )
-
-        return {"d_loss": disc_loss, "g_loss": gen_loss}
+        return {"d_loss": d_loss, "g_loss": g_loss}
