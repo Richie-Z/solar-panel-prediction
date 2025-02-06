@@ -7,6 +7,8 @@ from helpers import (
     find_missing_date_ranges,
 )
 
+from gan import build_generator, build_discriminator, SolarGAN
+
 from enums import DatasetColumns, WeatherDatasetColumns
 
 from sklearn.preprocessing import MinMaxScaler
@@ -16,39 +18,38 @@ from tensorflow.keras import layers, models
 def build_generator(latent_dim, num_features):
     noise_input = tf.keras.Input(shape=(latent_dim,))
     weather_input = tf.keras.Input(shape=(num_features,))
-
-    # Concatenate noise and weather features
-    x = tf.keras.layers.Concatenate()([noise_input, weather_input])
-
-    # Initial dense layer with larger size
-    x = tf.keras.layers.Dense(1024)(x)
+    weather_normalized = tf.keras.layers.BatchNormalization()(weather_input)
+    x = tf.keras.layers.Concatenate()([noise_input, weather_normalized])
+    x = tf.keras.layers.Dense(2048)(x)
     x = tf.keras.layers.LeakyReLU(alpha=0.2)(x)
     x = tf.keras.layers.BatchNormalization()(x)
 
-    # Intermediate layers with skip connections
-    def residual_block(x, units):
+    def residual_block(x, units, dropout_rate=0.3):
         skip = x
         x = tf.keras.layers.Dense(units)(x)
         x = tf.keras.layers.LeakyReLU(alpha=0.2)(x)
         x = tf.keras.layers.BatchNormalization()(x)
+        x = tf.keras.layers.Dropout(dropout_rate)(x)
         x = tf.keras.layers.Dense(units)(x)
         x = tf.keras.layers.LeakyReLU(alpha=0.2)(x)
         x = tf.keras.layers.BatchNormalization()(x)
-        # Add skip connection if dimensions match
         if skip.shape[-1] == units:
             x = tf.keras.layers.Add()([x, skip])
         return x
 
-    x = residual_block(x, 512)
-    x = residual_block(x, 256)
+    x = residual_block(x, 1024, 0.3)
+    x = residual_block(x, 512, 0.3)
+    x = residual_block(x, 256, 0.2)
 
-    # Pre-output layer
     x = tf.keras.layers.Dense(128)(x)
     x = tf.keras.layers.LeakyReLU(alpha=0.2)(x)
     x = tf.keras.layers.BatchNormalization()(x)
 
-    # Output layer with softplus activation (smoother than ReLU)
-    output = tf.keras.layers.Dense(1, activation="softplus")(x)
+    def custom_activation(x):
+
+        return tf.keras.activations.softplus(x) + tf.keras.backend.epsilon()
+
+    output = tf.keras.layers.Dense(1, activation=custom_activation)(x)
 
     return tf.keras.Model(
         inputs=[noise_input, weather_input], outputs=output, name="Generator"
@@ -59,23 +60,25 @@ def build_discriminator(num_features):
     pv_input = tf.keras.Input(shape=(1,))
     weather_input = tf.keras.Input(shape=(num_features,))
 
-    # Concatenate PV yield and weather features
-    x = tf.keras.layers.Concatenate()([pv_input, weather_input])
+    pv_normalized = tf.keras.layers.BatchNormalization()(pv_input)
+    weather_normalized = tf.keras.layers.BatchNormalization()(weather_input)
 
-    # Dense layers with LeakyReLU
-    x = tf.keras.layers.Dense(256)(x)
-    x = tf.keras.layers.LeakyReLU(alpha=0.2)(x)
-    x = tf.keras.layers.LayerNormalization()(x)
+    x = tf.keras.layers.Concatenate()([pv_normalized, weather_normalized])
 
-    x = tf.keras.layers.Dense(128)(x)
-    x = tf.keras.layers.LeakyReLU(alpha=0.2)(x)
-    x = tf.keras.layers.LayerNormalization()(x)
+    def dense_block(x, units, dropout_rate=0.2):
+        x = tf.keras.layers.Dense(
+            units, kernel_constraint=tf.keras.constraints.MaxNorm(1.0)
+        )(x)
+        x = tf.keras.layers.LeakyReLU(alpha=0.2)(x)
+        x = tf.keras.layers.LayerNormalization()(x)
+        x = tf.keras.layers.Dropout(dropout_rate)(x)
+        return x
 
-    x = tf.keras.layers.Dense(64)(x)
-    x = tf.keras.layers.LeakyReLU(alpha=0.2)(x)
-    x = tf.keras.layers.LayerNormalization()(x)
+    x = dense_block(x, 512, 0.3)
+    x = dense_block(x, 256, 0.3)
+    x = dense_block(x, 128, 0.2)
+    x = dense_block(x, 64, 0.2)
 
-    # Output without activation for WGAN
     output = tf.keras.layers.Dense(1)(x)
 
     return tf.keras.Model(
@@ -92,6 +95,8 @@ class SolarGAN(tf.keras.Model):
         self.discriminator = build_discriminator(num_features)
         self.gp_weight = 10.0
 
+        self.l1_weight = tf.Variable(0.1, trainable=False)
+
     def compile(self, g_optimizer, d_optimizer):
         super(SolarGAN, self).compile()
         self.g_optimizer = g_optimizer
@@ -102,8 +107,25 @@ class SolarGAN(tf.keras.Model):
         real_pv, weather_features = data
         batch_size = tf.shape(real_pv)[0]
 
-        # Train discriminator
-        for _ in range(3):  # Reduced number of D updates
+        d_steps = tf.minimum(
+            5,
+            tf.maximum(
+                1,
+                tf.cast(
+                    (
+                        tf.abs(
+                            self.generator.losses[-1] / self.discriminator.losses[-1]
+                        )
+                        if len(self.generator.losses) > 0
+                        and len(self.discriminator.losses) > 0
+                        else 3
+                    ),
+                    tf.int32,
+                ),
+            ),
+        )
+
+        for _ in range(d_steps):
             noise = tf.random.normal([batch_size, self.latent_dim])
 
             with tf.GradientTape() as tape:
@@ -116,7 +138,6 @@ class SolarGAN(tf.keras.Model):
                     [fake_pv, weather_features], training=True
                 )
 
-                # Gradient penalty
                 alpha = tf.random.uniform([batch_size, 1], 0.0, 1.0)
                 interpolated = alpha * real_pv + (1 - alpha) * fake_pv
 
@@ -130,7 +151,6 @@ class SolarGAN(tf.keras.Model):
                 grad_norm = tf.sqrt(tf.reduce_sum(tf.square(grads), axis=1))
                 gradient_penalty = tf.reduce_mean((grad_norm - 1.0) ** 2)
 
-                # Discriminator loss with reduced weight on gradient penalty
                 d_loss = (
                     tf.reduce_mean(fake_pred)
                     - tf.reduce_mean(real_pred)
@@ -138,12 +158,31 @@ class SolarGAN(tf.keras.Model):
                 )
 
             d_gradients = tape.gradient(d_loss, self.discriminator.trainable_variables)
+
+            d_gradients = [tf.clip_by_norm(g, 1.0) for g in d_gradients]
             self.d_optimizer.apply_gradients(
                 zip(d_gradients, self.discriminator.trainable_variables)
             )
 
-        # Train generator twice
-        for _ in range(2):
+        g_steps = tf.minimum(
+            3,
+            tf.maximum(
+                1,
+                tf.cast(
+                    (
+                        tf.abs(
+                            self.discriminator.losses[-1] / self.generator.losses[-1]
+                        )
+                        if len(self.generator.losses) > 0
+                        and len(self.discriminator.losses) > 0
+                        else 2
+                    ),
+                    tf.int32,
+                ),
+            ),
+        )
+
+        for _ in range(g_steps):
             noise = tf.random.normal([batch_size, self.latent_dim])
 
             with tf.GradientTape() as tape:
@@ -152,12 +191,20 @@ class SolarGAN(tf.keras.Model):
                     [fake_pv, weather_features], training=True
                 )
 
-                # Generator loss with added L1 loss for stability
-                g_loss = -tf.reduce_mean(fake_pred) + 0.1 * tf.reduce_mean(
-                    tf.abs(fake_pv - real_pv)
+                l1_loss = tf.reduce_mean(tf.abs(fake_pv - real_pv))
+                self.l1_weight.assign(
+                    tf.maximum(
+                        0.01,
+                        0.1
+                        * tf.exp(-0.1 * tf.cast(self.optimizer.iterations, tf.float32)),
+                    )
                 )
 
+                g_loss = -tf.reduce_mean(fake_pred) + self.l1_weight * l1_loss
+
             g_gradients = tape.gradient(g_loss, self.generator.trainable_variables)
+
+            g_gradients = [tf.clip_by_norm(g, 1.0) for g in g_gradients]
             self.g_optimizer.apply_gradients(
                 zip(g_gradients, self.generator.trainable_variables)
             )
@@ -254,31 +301,67 @@ def prepare_data(pre_gap_train_combined, pre_gap_test_combined, weather_features
     return train_dataset, test_dataset, scaler
 
 
+def plot_training_history(history):
+    plt.figure(figsize=(12, 5))
+    plt.plot(history["d_loss"], label="Discriminator Loss")
+    plt.plot(history["g_loss"], label="Generator Loss")
+    plt.xlabel("Epoch")
+    plt.ylabel("Loss")
+    plt.legend()
+    plt.title("Training History")
+    plt.grid(True)
+    plt.show()
+
+
 def train_solar_gan(train_dataset, num_features):
+
+    try:
+        tf.config.experimental.set_memory_growth(
+            tf.config.list_physical_devices("GPU")[0], True
+        )
+    except:
+        pass
 
     solar_gan = SolarGAN(LATENT_DIM, num_features)
 
-    lr = 1e-4
+    initial_lr = 2e-4
+
     solar_gan.compile(
-        g_optimizer=tf.keras.optimizers.Adam(lr, beta_1=0.5, beta_2=0.9),
-        d_optimizer=tf.keras.optimizers.Adam(lr, beta_1=0.5, beta_2=0.9),
+        g_optimizer=tf.keras.optimizers.Adam(initial_lr, beta_1=0.0, beta_2=0.9),
+        d_optimizer=tf.keras.optimizers.Adam(initial_lr, beta_1=0.0, beta_2=0.9),
     )
 
     history = {"d_loss": [], "g_loss": []}
-
     best_loss = float("inf")
     patience = 50
     patience_counter = 0
-    min_epochs = 500
+    min_epochs = 300
+
+    warmup_epochs = 10
 
     for epoch in range(EPOCHS):
         epoch_d_loss = []
         epoch_g_loss = []
 
+        if epoch < warmup_epochs:
+            current_lr = initial_lr * (epoch + 1) / warmup_epochs
+        else:
+            current_lr = initial_lr * (0.98 ** (epoch - warmup_epochs))
+
+        solar_gan.g_optimizer = tf.keras.optimizers.Adam(
+            current_lr, beta_1=0.0, beta_2=0.9
+        )
+        solar_gan.d_optimizer = tf.keras.optimizers.Adam(
+            current_lr, beta_1=0.0, beta_2=0.9
+        )
+
         for batch_data in train_dataset:
-            losses = solar_gan.train_step(batch_data)
-            epoch_d_loss.append(float(losses["d_loss"]))
-            epoch_g_loss.append(float(losses["g_loss"]))
+
+            d_steps = 3 if np.mean(epoch_d_loss) > 5 else 2
+            for _ in range(d_steps):
+                losses = solar_gan.train_step(batch_data)
+                epoch_d_loss.append(float(losses["d_loss"]))
+                epoch_g_loss.append(float(losses["g_loss"]))
 
         avg_d_loss = np.mean(epoch_d_loss)
         avg_g_loss = np.mean(epoch_g_loss)
@@ -286,14 +369,14 @@ def train_solar_gan(train_dataset, num_features):
         history["d_loss"].append(avg_d_loss)
         history["g_loss"].append(avg_g_loss)
 
-        if (epoch + 1) % 10 == 0:
+        if (epoch + 1) % 5 == 0:
             print(
                 f"Epoch {epoch + 1}/{EPOCHS} | D Loss: {avg_d_loss:.4f} | G Loss: {avg_g_loss:.4f}"
             )
+            print(f"Current learning rate: {current_lr:.6f}")
 
         if epoch >= min_epochs:
-
-            current_loss = abs(avg_d_loss) + abs(avg_g_loss)
+            current_loss = abs(avg_d_loss)
             if current_loss < best_loss * 1.1:
                 best_loss = min(current_loss, best_loss)
                 patience_counter = 0
@@ -305,18 +388,6 @@ def train_solar_gan(train_dataset, num_features):
                 break
 
     return solar_gan, history
-
-
-def plot_training_history(history):
-    plt.figure(figsize=(12, 5))
-    plt.plot(history["d_loss"], label="Discriminator Loss")
-    plt.plot(history["g_loss"], label="Generator Loss")
-    plt.xlabel("Epoch")
-    plt.ylabel("Loss")
-    plt.legend()
-    plt.title("Training History")
-    plt.grid(True)
-    plt.show()
 
 
 def generate_predictions(model, weather_features, scaler):

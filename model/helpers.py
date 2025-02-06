@@ -270,14 +270,14 @@ def evaluate_predictions(actual, predicted, fill_value=0):
 
 
 def compare_prediction(
-    title: str, train_data: pd.Series, test_data: pd.Series, predicted
+    title: str, train_data=None, test_data=None, predicted=None
 ) -> None:
     """
     Plot and compare train, test, and predicted data.
 
     Parameters:
     - title: str. The title of the plot.
-    - train_data: pd.Series. The training data series.
+    - train_data: pd.Series. The training data series. Default is None.
     - test_data: pd.Series. The test data series.
     - predicted: pd.Series. The predicted data series.
 
@@ -285,9 +285,12 @@ def compare_prediction(
     - None
     """
     plt.figure(figsize=(12, 6))
-    plt.plot(train_data, label="Train")
-    plt.plot(test_data, label="Test", color="orange")
-    plt.plot(predicted, label="Predicted", color="green")
+    if train_data is not None:
+        plt.plot(train_data, label="Train")
+    if test_data is not None:
+        plt.plot(test_data, label="Test", color="orange")
+    if predicted is not None:
+        plt.plot(predicted, label="Predicted", color="green")
     plt.legend()
     plt.title(title)
     plt.show()
