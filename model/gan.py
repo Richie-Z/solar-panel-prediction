@@ -75,7 +75,7 @@ class SolarGAN(tf.keras.Model):
         self.latent_dim = latent_dim
         self.generator = build_generator(latent_dim, num_features)
         self.discriminator = build_discriminator(num_features)
-        self.gp_weight = 10.0
+        self.gp_weight = 15.0
 
     def compile(self, g_optimizer, d_optimizer):
         super(SolarGAN, self).compile()
@@ -87,7 +87,7 @@ class SolarGAN(tf.keras.Model):
         real_pv, weather_features = data
         batch_size = tf.shape(real_pv)[0]
 
-        d_steps = 3
+        d_steps = 5
         g_steps = 1
 
         d_loss_avg = 0
