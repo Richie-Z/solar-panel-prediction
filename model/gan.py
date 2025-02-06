@@ -5,14 +5,19 @@ from tensorflow.keras import layers, models
 def build_generator(latent_dim, num_features):
     noise_input = tf.keras.Input(shape=(latent_dim,))
     weather_input = tf.keras.Input(shape=(num_features,))
+
     weather_normalized = tf.keras.layers.BatchNormalization()(weather_input)
+
     x = tf.keras.layers.Concatenate()([noise_input, weather_normalized])
-    x = tf.keras.layers.Dense(2048)(x)
+
+    x = tf.keras.layers.Dense(1024)(x)
     x = tf.keras.layers.LeakyReLU(alpha=0.2)(x)
     x = tf.keras.layers.BatchNormalization()(x)
 
-    def residual_block(x, units, dropout_rate=0.3):
+    def dense_block(x, units, dropout_rate=0.2):
         skip = x
+        skip = tf.keras.layers.Dense(units)(skip) if skip.shape[-1] != units else skip
+
         x = tf.keras.layers.Dense(units)(x)
         x = tf.keras.layers.LeakyReLU(alpha=0.2)(x)
         x = tf.keras.layers.BatchNormalization()(x)
@@ -20,23 +25,17 @@ def build_generator(latent_dim, num_features):
         x = tf.keras.layers.Dense(units)(x)
         x = tf.keras.layers.LeakyReLU(alpha=0.2)(x)
         x = tf.keras.layers.BatchNormalization()(x)
-        if skip.shape[-1] == units:
-            x = tf.keras.layers.Add()([x, skip])
-        return x
 
-    x = residual_block(x, 1024, 0.3)
-    x = residual_block(x, 512, 0.3)
-    x = residual_block(x, 256, 0.2)
+        return tf.keras.layers.Add()([x, skip])
 
-    x = tf.keras.layers.Dense(128)(x)
+    x = dense_block(x, 512)
+    x = dense_block(x, 256)
+    x = dense_block(x, 128)
+    x = dense_block(x, 64)
+
+    x = tf.keras.layers.Dense(32)(x)
     x = tf.keras.layers.LeakyReLU(alpha=0.2)(x)
-    x = tf.keras.layers.BatchNormalization()(x)
-
-    def custom_activation(x):
-
-        return tf.keras.activations.softplus(x) + tf.keras.backend.epsilon()
-
-    output = tf.keras.layers.Dense(1, activation=custom_activation)(x)
+    output = tf.keras.layers.Dense(1, activation="sigmoid")(x)
 
     return tf.keras.Model(
         inputs=[noise_input, weather_input], outputs=output, name="Generator"
@@ -52,19 +51,16 @@ def build_discriminator(num_features):
 
     x = tf.keras.layers.Concatenate()([pv_normalized, weather_normalized])
 
-    def dense_block(x, units, dropout_rate=0.2):
-        x = tf.keras.layers.Dense(
-            units, kernel_constraint=tf.keras.constraints.MaxNorm(1.0)
-        )(x)
+    def critic_block(x, units, dropout_rate=0.3):
+        x = tf.keras.layers.Dense(units)(x)
         x = tf.keras.layers.LeakyReLU(alpha=0.2)(x)
-        x = tf.keras.layers.LayerNormalization()(x)
-        x = tf.keras.layers.Dropout(dropout_rate)(x)
-        return x
+        x = tf.keras.layers.BatchNormalization()(x)
+        return tf.keras.layers.Dropout(dropout_rate)(x)
 
-    x = dense_block(x, 512, 0.3)
-    x = dense_block(x, 256, 0.3)
-    x = dense_block(x, 128, 0.2)
-    x = dense_block(x, 64, 0.2)
+    x = critic_block(x, 128, 0.3)
+    x = critic_block(x, 256, 0.3)
+    x = critic_block(x, 512, 0.3)
+    x = critic_block(x, 256, 0.3)
 
     output = tf.keras.layers.Dense(1)(x)
 
@@ -77,12 +73,9 @@ class SolarGAN(tf.keras.Model):
     def __init__(self, latent_dim, num_features):
         super(SolarGAN, self).__init__()
         self.latent_dim = latent_dim
-        self.num_features = num_features
         self.generator = build_generator(latent_dim, num_features)
         self.discriminator = build_discriminator(num_features)
         self.gp_weight = 10.0
-
-        self.l1_weight = tf.Variable(0.1, trainable=False)
 
     def compile(self, g_optimizer, d_optimizer):
         super(SolarGAN, self).compile()
@@ -94,24 +87,10 @@ class SolarGAN(tf.keras.Model):
         real_pv, weather_features = data
         batch_size = tf.shape(real_pv)[0]
 
-        d_steps = tf.minimum(
-            5,
-            tf.maximum(
-                1,
-                tf.cast(
-                    (
-                        tf.abs(
-                            self.generator.losses[-1] / self.discriminator.losses[-1]
-                        )
-                        if len(self.generator.losses) > 0
-                        and len(self.discriminator.losses) > 0
-                        else 3
-                    ),
-                    tf.int32,
-                ),
-            ),
-        )
+        d_steps = 3
+        g_steps = 1
 
+        d_loss_avg = 0
         for _ in range(d_steps):
             noise = tf.random.normal([batch_size, self.latent_dim])
 
@@ -145,30 +124,12 @@ class SolarGAN(tf.keras.Model):
                 )
 
             d_gradients = tape.gradient(d_loss, self.discriminator.trainable_variables)
-
-            d_gradients = [tf.clip_by_norm(g, 1.0) for g in d_gradients]
             self.d_optimizer.apply_gradients(
                 zip(d_gradients, self.discriminator.trainable_variables)
             )
+            d_loss_avg += d_loss
 
-        g_steps = tf.minimum(
-            3,
-            tf.maximum(
-                1,
-                tf.cast(
-                    (
-                        tf.abs(
-                            self.discriminator.losses[-1] / self.generator.losses[-1]
-                        )
-                        if len(self.generator.losses) > 0
-                        and len(self.discriminator.losses) > 0
-                        else 2
-                    ),
-                    tf.int32,
-                ),
-            ),
-        )
-
+        g_loss_avg = 0
         for _ in range(g_steps):
             noise = tf.random.normal([batch_size, self.latent_dim])
 
@@ -178,22 +139,18 @@ class SolarGAN(tf.keras.Model):
                     [fake_pv, weather_features], training=True
                 )
 
-                l1_loss = tf.reduce_mean(tf.abs(fake_pv - real_pv))
-                self.l1_weight.assign(
-                    tf.maximum(
-                        0.01,
-                        0.1
-                        * tf.exp(-0.1 * tf.cast(self.optimizer.iterations, tf.float32)),
-                    )
+                wasserstein_loss = -tf.reduce_mean(fake_pred)
+                l1_loss = 0.1 * tf.reduce_mean(tf.abs(fake_pv - real_pv))
+                range_penalty = 5.0 * tf.reduce_mean(
+                    tf.maximum(0.0, tf.abs(fake_pv) - 1.0)
                 )
 
-                g_loss = -tf.reduce_mean(fake_pred) + self.l1_weight * l1_loss
+                g_loss = wasserstein_loss + l1_loss + range_penalty
 
             g_gradients = tape.gradient(g_loss, self.generator.trainable_variables)
-
-            g_gradients = [tf.clip_by_norm(g, 1.0) for g in g_gradients]
             self.g_optimizer.apply_gradients(
                 zip(g_gradients, self.generator.trainable_variables)
             )
+            g_loss_avg += g_loss
 
-        return {"d_loss": d_loss, "g_loss": g_loss}
+        return {"d_loss": d_loss_avg / d_steps, "g_loss": g_loss_avg / g_steps}
