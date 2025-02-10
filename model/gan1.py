@@ -1,14 +1,12 @@
-import pandas as pd
+ import pandas as pd
 import numpy as np
 import tensorflow as tf
 import matplotlib.pyplot as plt
 
 from helpers import find_missing_date_ranges
-from gan import SolarGAN
 from enums import DatasetColumns, WeatherDatasetColumns
 
 from sklearn.preprocessing import MinMaxScaler
-import tensorflow as tf
 from tensorflow.keras import layers, models
 
 
@@ -16,15 +14,22 @@ def build_generator(latent_dim, num_features):
     noise_input = tf.keras.Input(shape=(latent_dim,))
     weather_input = tf.keras.Input(shape=(num_features,))
 
-    weather_normalized = tf.keras.layers.BatchNormalization()(weather_input)
+    # Improved weather processing
+    weather_x = tf.keras.layers.BatchNormalization()(weather_input)
+    weather_x = tf.keras.layers.Dense(32)(weather_x)
+    weather_x = tf.keras.layers.LeakyReLU(alpha=0.2)(weather_x)
+    weather_x = tf.keras.layers.BatchNormalization()(weather_x)
 
-    x = tf.keras.layers.Concatenate()([noise_input, weather_normalized])
+    # Process noise
+    noise_x = tf.keras.layers.Dense(64)(noise_input)
+    noise_x = tf.keras.layers.LeakyReLU(alpha=0.2)(noise_x)
+    noise_x = tf.keras.layers.BatchNormalization()(noise_x)
 
-    x = tf.keras.layers.Dense(1024)(x)
-    x = tf.keras.layers.LeakyReLU(alpha=0.2)(x)
-    x = tf.keras.layers.BatchNormalization()(x)
+    # Combine features
+    x = tf.keras.layers.Concatenate()([noise_x, weather_x])
 
-    def dense_block(x, units, dropout_rate=0.2):
+    # Wider network with residual connections
+    def dense_block(x, units, dropout_rate=0.3):
         skip = x
         skip = tf.keras.layers.Dense(units)(skip) if skip.shape[-1] != units else skip
 
@@ -32,24 +37,29 @@ def build_generator(latent_dim, num_features):
         x = tf.keras.layers.LeakyReLU(alpha=0.2)(x)
         x = tf.keras.layers.BatchNormalization()(x)
         x = tf.keras.layers.Dropout(dropout_rate)(x)
+
         x = tf.keras.layers.Dense(units)(x)
         x = tf.keras.layers.LeakyReLU(alpha=0.2)(x)
         x = tf.keras.layers.BatchNormalization()(x)
 
         return tf.keras.layers.Add()([x, skip])
 
-    x = dense_block(x, 512)
-    x = dense_block(x, 256)
-    x = dense_block(x, 128)
-    x = dense_block(x, 64)
+    # Deeper architecture
+    x = dense_block(x, 512, 0.3)
+    x = dense_block(x, 256, 0.3)
+    x = dense_block(x, 256, 0.3)
+    x = dense_block(x, 128, 0.3)
+    x = dense_block(x, 128, 0.3)
 
-    x = tf.keras.layers.Dense(32)(x)
+    # Final layers with stronger regularization
+    x = tf.keras.layers.Dense(64)(x)
     x = tf.keras.layers.LeakyReLU(alpha=0.2)(x)
+    x = tf.keras.layers.BatchNormalization()(x)
+    x = tf.keras.layers.Dropout(0.2)(x)
+
     output = tf.keras.layers.Dense(1, activation="sigmoid")(x)
 
-    return tf.keras.Model(
-        inputs=[noise_input, weather_input], outputs=output, name="Generator"
-    )
+    return tf.keras.Model(inputs=[noise_input, weather_input], outputs=output)
 
 
 def build_discriminator(num_features):
@@ -85,7 +95,7 @@ class SolarGAN(tf.keras.Model):
         self.latent_dim = latent_dim
         self.generator = build_generator(latent_dim, num_features)
         self.discriminator = build_discriminator(num_features)
-        self.gp_weight = 15.0
+        self.gp_weight = 10.0  # Reduced from 15.0
 
     def compile(self, g_optimizer, d_optimizer):
         super(SolarGAN, self).compile()
@@ -97,7 +107,8 @@ class SolarGAN(tf.keras.Model):
         real_pv, weather_features = data
         batch_size = tf.shape(real_pv)[0]
 
-        d_steps = 5
+        # Increased discriminator steps for better training
+        d_steps = 3  # Reduced from 5
         g_steps = 1
 
         d_loss_avg = 0
@@ -114,8 +125,9 @@ class SolarGAN(tf.keras.Model):
                     [fake_pv, weather_features], training=True
                 )
 
+                # Improved gradient penalty calculation
                 alpha = tf.random.uniform([batch_size, 1], 0.0, 1.0)
-                interpolated = alpha * real_pv + (1 - alpha) * fake_pv
+                interpolated = real_pv + alpha * (fake_pv - real_pv)
 
                 with tf.GradientTape() as gp_tape:
                     gp_tape.watch(interpolated)
@@ -149,13 +161,19 @@ class SolarGAN(tf.keras.Model):
                     [fake_pv, weather_features], training=True
                 )
 
+                # Improved loss functions
                 wasserstein_loss = -tf.reduce_mean(fake_pred)
-                l1_loss = 0.1 * tf.reduce_mean(tf.abs(fake_pv - real_pv))
-                range_penalty = 5.0 * tf.reduce_mean(
-                    tf.maximum(0.0, tf.abs(fake_pv) - 1.0)
-                )
+                l1_loss = 0.2 * tf.reduce_mean(
+                    tf.abs(fake_pv - real_pv)
+                )  # Increased weight
+                l2_loss = 0.1 * tf.reduce_mean(
+                    tf.square(fake_pv - real_pv)
+                )  # Added L2 loss
+                smoothness_loss = 0.1 * tf.reduce_mean(
+                    tf.abs(fake_pv[1:] - fake_pv[:-1])
+                )  # Added smoothness
 
-                g_loss = wasserstein_loss + l1_loss + range_penalty
+                g_loss = wasserstein_loss + l1_loss + l2_loss + smoothness_loss
 
             g_gradients = tape.gradient(g_loss, self.generator.trainable_variables)
             self.g_optimizer.apply_gradients(
@@ -223,8 +241,10 @@ pre_gap_test_combined = pre_gap_test.join(
 
 LATENT_DIM = 128
 LEARNING_RATE = 5e-5
-BATCH_SIZE = 64
-EPOCHS = 1000
+LEARNING_RATE_G = 2e-5
+LEARNING_RATE_D = 1e-5
+BATCH_SIZE = 32
+EPOCHS = 2000
 
 
 def prepare_data(pre_gap_train_combined, pre_gap_test_combined, weather_features):
@@ -255,20 +275,30 @@ def train_solar_gan(train_dataset, num_features):
     solar_gan = SolarGAN(LATENT_DIM, num_features)
     solar_gan.compile(
         g_optimizer=tf.keras.optimizers.Adam(
-            learning_rate=1e-5, beta_1=0.5, beta_2=0.9
+            learning_rate=LEARNING_RATE_G, beta_1=0.5, beta_2=0.9
         ),
         d_optimizer=tf.keras.optimizers.Adam(
-            learning_rate=5e-5, beta_1=0.5, beta_2=0.9
+            learning_rate=LEARNING_RATE_D, beta_1=0.5, beta_2=0.9
         ),
     )
 
     history = {"d_loss": [], "g_loss": []}
     best_loss = float("inf")
-    patience = 50
+    patience = 100
     patience_counter = 0
-    min_epochs = 100
+    min_epochs = 300
+
+    initial_lr_g = 2e-5
+    initial_lr_d = 1e-5
 
     for epoch in range(EPOCHS):
+
+        if epoch > 0 and epoch % 200 == 0:
+            solar_gan.g_optimizer.learning_rate = LEARNING_RATE_G * 0.9
+            solar_gan.d_optimizer.learning_rate = LEARNING_RATE_D * 0.9
+            initial_lr_g *= 0.9
+            initial_lr_d *= 0.9
+
         d_losses = []
         g_losses = []
 
@@ -282,13 +312,12 @@ def train_solar_gan(train_dataset, num_features):
         history["d_loss"].append(avg_d_loss)
         history["g_loss"].append(avg_g_loss)
 
-        if (epoch + 1) % 10 == 0:
-            print(f"Epoch {epoch + 1}/{EPOCHS}")
-            print(f"D Loss: {avg_d_loss:.4f} | G Loss: {avg_g_loss:.4f}")
+        print(f"Epoch {epoch + 1}/{EPOCHS}")
+        print(f"D Loss: {avg_d_loss:.4f} | G Loss: {avg_g_loss:.4f}")
 
         if epoch >= min_epochs:
             current_loss = abs(avg_d_loss) + abs(avg_g_loss)
-            if current_loss < best_loss * 0.995:
+            if current_loss < best_loss * 0.999:
                 best_loss = current_loss
                 patience_counter = 0
             else:
@@ -362,8 +391,8 @@ plot_training_history(history)
 predictions, true_values = evaluate_model(solar_gan, test_dataset, scaler)
 
 plt.figure(figsize=(12, 6))
-plt.plot(true_values, label="True Values")
-plt.plot(predictions, label="Predicted Values")
+plt.plot(true_values, label="True Values", color="orange")
+plt.plot(predictions, label="Predicted Values", color="green")
 plt.legend()
 plt.title("WGAP-GP Predictions vs Actual")
 plt.show()
