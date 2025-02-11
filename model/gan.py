@@ -1,26 +1,21 @@
 import tensorflow as tf
-from tensorflow.keras import layers, models
 
 
 def build_generator(latent_dim, num_features):
     noise_input = tf.keras.Input(shape=(latent_dim,))
     weather_input = tf.keras.Input(shape=(num_features,))
 
-    # Improved weather processing
     weather_x = tf.keras.layers.BatchNormalization()(weather_input)
     weather_x = tf.keras.layers.Dense(32)(weather_x)
     weather_x = tf.keras.layers.LeakyReLU(alpha=0.2)(weather_x)
     weather_x = tf.keras.layers.BatchNormalization()(weather_x)
 
-    # Process noise
     noise_x = tf.keras.layers.Dense(64)(noise_input)
     noise_x = tf.keras.layers.LeakyReLU(alpha=0.2)(noise_x)
     noise_x = tf.keras.layers.BatchNormalization()(noise_x)
 
-    # Combine features
     x = tf.keras.layers.Concatenate()([noise_x, weather_x])
 
-    # Wider network with residual connections
     def dense_block(x, units, dropout_rate=0.3):
         skip = x
         skip = tf.keras.layers.Dense(units)(skip) if skip.shape[-1] != units else skip
@@ -36,14 +31,12 @@ def build_generator(latent_dim, num_features):
 
         return tf.keras.layers.Add()([x, skip])
 
-    # Deeper architecture
     x = dense_block(x, 512, 0.3)
     x = dense_block(x, 256, 0.3)
     x = dense_block(x, 256, 0.3)
     x = dense_block(x, 128, 0.3)
     x = dense_block(x, 128, 0.3)
 
-    # Final layers with stronger regularization
     x = tf.keras.layers.Dense(64)(x)
     x = tf.keras.layers.LeakyReLU(alpha=0.2)(x)
     x = tf.keras.layers.BatchNormalization()(x)
@@ -87,7 +80,7 @@ class SolarGAN(tf.keras.Model):
         self.latent_dim = latent_dim
         self.generator = build_generator(latent_dim, num_features)
         self.discriminator = build_discriminator(num_features)
-        self.gp_weight = 10.0  # Reduced from 15.0
+        self.gp_weight = 10.0
 
     def compile(self, g_optimizer, d_optimizer):
         super(SolarGAN, self).compile()
@@ -99,8 +92,7 @@ class SolarGAN(tf.keras.Model):
         real_pv, weather_features = data
         batch_size = tf.shape(real_pv)[0]
 
-        # Increased discriminator steps for better training
-        d_steps = 3  # Reduced from 5
+        d_steps = 3
         g_steps = 1
 
         d_loss_avg = 0
@@ -117,7 +109,6 @@ class SolarGAN(tf.keras.Model):
                     [fake_pv, weather_features], training=True
                 )
 
-                # Improved gradient penalty calculation
                 alpha = tf.random.uniform([batch_size, 1], 0.0, 1.0)
                 interpolated = real_pv + alpha * (fake_pv - real_pv)
 
@@ -153,17 +144,12 @@ class SolarGAN(tf.keras.Model):
                     [fake_pv, weather_features], training=True
                 )
 
-                # Improved loss functions
                 wasserstein_loss = -tf.reduce_mean(fake_pred)
-                l1_loss = 0.2 * tf.reduce_mean(
-                    tf.abs(fake_pv - real_pv)
-                )  # Increased weight
-                l2_loss = 0.1 * tf.reduce_mean(
-                    tf.square(fake_pv - real_pv)
-                )  # Added L2 loss
+                l1_loss = 0.2 * tf.reduce_mean(tf.abs(fake_pv - real_pv))
+                l2_loss = 0.1 * tf.reduce_mean(tf.square(fake_pv - real_pv))
                 smoothness_loss = 0.1 * tf.reduce_mean(
                     tf.abs(fake_pv[1:] - fake_pv[:-1])
-                )  # Added smoothness
+                )
 
                 g_loss = wasserstein_loss + l1_loss + l2_loss + smoothness_loss
 
