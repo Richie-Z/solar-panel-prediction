@@ -1,0 +1,9 @@
+wheel
+pandas 
+tensorflow-macos
+tensorflow-metal
+matplotlib
+sckit-learn
+seaborn
+diskcache
+statsmodels
