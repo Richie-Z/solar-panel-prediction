@@ -305,24 +305,8 @@ def find_best_sarima_params(
     P_values,
     D_values,
     Q_values,
-) -> tuple:
-    """
-    Tunes the SARIMA model parameters to find the best combination based on AIC score.
-
-    Parameters:
-    - data: pd.Series. The time series data to model.
-    - seasonal_period: int. The number of observations in one season.
-    - p_values: list of int. The possible values for the non-seasonal autoregressive order.
-    - d_values: list of int. The possible values for the non-seasonal differencing order.
-    - q_values: list of int. The possible values for the non-seasonal moving average order.
-    - P_values: list of int. The possible values for the seasonal autoregressive order.
-    - D_values: list of int. The possible values for the seasonal differencing order.
-    - Q_values: list of int. The possible values for the seasonal moving average order.
-
-    Returns:
-    - best_params: tuple. The best combination of parameters (p, d, q, P, D, Q) based on AIC score.
-    - best_score: float. The best AIC score obtained.
-    """
+):
+    results = []
     best_score = float("inf")
     best_params = None
 
@@ -337,15 +321,18 @@ def find_best_sarima_params(
                     enforce_invertibility=False,
                 )
                 result = model.fit(disp=False)
-                # Calculate AIC (Akaike Information Criterion)
                 aic = result.aic
+
+                results.append((params, seasonal_params, aic))
+
                 if aic < best_score:
                     best_score = aic
                     best_params = (params, seasonal_params)
             except Exception:
                 continue
 
-    return best_params, best_score
+    df_results = pd.DataFrame(results, columns=["ARIMA", "Seasonal", "AIC"])
+    return best_params, best_score, df_results
 
 
 def find_best_sarima_cached(

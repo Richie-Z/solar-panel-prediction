@@ -1,0 +1,41 @@
+graph TD
+    Weather[Weather Features]
+    RealPV[Real PV]
+    Noise[Noise z]
+    
+    Generator[Generator]
+    FakePV[Fake PV]
+    
+    Discriminator[Discriminator]
+    RealPred[Real Prediction]
+    FakePred[Fake Prediction]
+    Interpolated[Interpolated Data]
+    GradientPenalty[Gradient Penalty]
+    
+    DLoss[Critic Loss d_loss]
+    GLoss[Generator Loss g_loss]
+    Validation[Validation]
+    
+    %% Data flow
+    Noise --> Generator
+    Weather --> Generator
+    Generator --> FakePV
+    
+    FakePV --> Discriminator
+    RealPV --> Discriminator
+    Weather --> Discriminator
+    
+    Discriminator --> RealPred
+    Discriminator --> FakePred
+    
+    RealPV --> Interpolated
+    FakePV --> Interpolated
+    Interpolated --> GradientPenalty
+    GradientPenalty --> DLoss
+    
+    FakePred --> DLoss
+    RealPred --> DLoss
+    
+    FakePV --> Validation
+    FakePV --> GLoss
+    FakePred --> GLoss
